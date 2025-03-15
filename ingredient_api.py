@@ -40,13 +40,14 @@ def get_rules():
         query_ingredients = [i.strip().lower() for i in ingredient_param.split(',') if i.strip()]
         
         def rule_matches(row):
-            union_ing = [ing.lower() for ing in (row['antecedents'] | row['consequents'])]
+            # Combine the antecedents and consequents lists
+            union_ing = [ing.lower() for ing in (row['antecedents'] + row['consequents'])]
             return any(q in union_ing for q in query_ingredients)
         
         filtered_df = filtered_df[filtered_df.apply(rule_matches, axis=1)]
         
         def contains_all(row):
-            union_ing = [ing.lower() for ing in (row['antecedents'] | row['consequents'])]
+            union_ing = [ing.lower() for ing in (row['antecedents'] + row['consequents'])]
             return all(q in union_ing for q in query_ingredients)
         
         filtered_df = filtered_df.copy()
@@ -59,8 +60,8 @@ def get_rules():
     result = []
     for _, row in filtered_df.iterrows():
         result.append({
-            "antecedents": list(row['antecedents']),  # frozenset converted to list
-            "consequents": list(row['consequents']),
+            "antecedents": row['antecedents'],  # Already stored as list
+            "consequents": row['consequents'],  # Already stored as list
             "support": row['support'],
             "confidence": row['confidence'],
             "lift": row['lift']
@@ -96,18 +97,35 @@ def upload_data():
 @app.route('/training', methods=['POST'])
 def training():
     """
-    POST /training?ingredient=<comma-separated ingredients>
+    POST /training?ingredient=<comma-separated ingredients>&product_name=<product name>
     Adds a new transaction to the cleaned data and updates the model.
-    Timestamped CSV and model files are saved.
+    If the product name already exists in the cleaned data (data/cosmetics_cleaned.csv),
+    no new training is performed and a notification is returned.
+    Otherwise, the model is updated and timestamped CSV and pickle files are saved.
     """
     ingredient_param = request.args.get('ingredient', None)
+    product_name = request.args.get('product_name', None)
+    
     if not ingredient_param:
         return jsonify({"error": "No ingredient provided in query parameters."}), 400
+    if not product_name:
+        return jsonify({"error": "No product_name provided in query parameters."}), 400
 
-    new_data = pd.DataFrame({"clean_ingredients": [ingredient_param.lower()]})
+    new_data = pd.DataFrame({
+        "product_name": [product_name.lower()],
+        "clean_ingredients": [ingredient_param.lower()]
+    })
     
+    cleaned_csv = os.path.join("data", "cosmetics_cleaned.csv")
+    
+    if os.path.exists(cleaned_csv):
+        df_existing = pd.read_csv(cleaned_csv)
+        if "product_name" in df_existing.columns:
+            if product_name.lower() in df_existing["product_name"].str.lower().values:
+                return jsonify({"message": f"Product '{product_name}' already exists. No update was performed."}), 200
+
     try:
-        combined_data, rules = update_model(new_data)
+        combined_data, rules = update_model(new_data, cleaned_csv=cleaned_csv)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         rule_filename = f"association_rules_{timestamp}.csv"
         model_filename = f"association_model_{timestamp}.pkl"

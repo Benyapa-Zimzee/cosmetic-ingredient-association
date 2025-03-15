@@ -12,21 +12,31 @@ os.makedirs("csv_report", exist_ok=True)
 def parse_literal_list(s):
     """
     Convert a string representation of a list or frozenset to an actual list.
+    If the string starts with "frozenset(", it is removed.
     """
     if pd.isnull(s):
         return []
     s = s.strip()
+    # Remove prefix "frozenset(" if present, and the trailing ")"
+    if s.startswith("frozenset("):
+        s = s[len("frozenset("):-1]
     try:
-        if s.startswith("frozenset("):
-            s = s[len("frozenset("):-1]
-        return list(ast.literal_eval(s))
+        result = ast.literal_eval(s)
+        # If result is a set, convert it to list and sort for consistency
+        if isinstance(result, set):
+            return sorted(list(result))
+        elif isinstance(result, list):
+            return result
+        else:
+            return [result]
     except Exception:
+        # Fallback: assume comma-separated string
         return [item.strip() for item in s.split(",") if item.strip()]
 
 def mine_association_rules(cleaned_csv="data/cosmetics_cleaned.csv", min_support=0.05, min_confidence=0.7):
     """
     Mine association rules from the cleaned CSV file using Apriori.
-    Returns a DataFrame of the generated rules.
+    Returns a DataFrame of the generated rules with antecedents and consequents as lists.
     """
     print("Loading cleaned data from", cleaned_csv)
     df = pd.read_csv(cleaned_csv)
@@ -53,7 +63,14 @@ def mine_association_rules(cleaned_csv="data/cosmetics_cleaned.csv", min_support
     rules = association_rules(frequent_itemsets, metric="confidence", min_threshold=min_confidence)
     print("Association rules generated:", len(rules))
     
-    return rules.sort_values(by=["lift", "confidence", "support"], ascending=False)
+    # Convert frozensets in antecedents and consequents to lists
+    rules['antecedents'] = rules['antecedents'].apply(lambda x: list(x))
+    rules['consequents'] = rules['consequents'].apply(lambda x: list(x))
+    
+    # Select only the desired columns and sort the DataFrame
+    return rules[['antecedents', 'consequents', 'support', 'confidence', 'lift']].sort_values(
+        by=["lift", "confidence", "support"], ascending=False
+    )
 
 def update_model(new_data, cleaned_csv="data/cosmetics_cleaned.csv", min_support=0.05, min_confidence=0.7):
     """
